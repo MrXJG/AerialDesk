@@ -9,6 +9,7 @@
 - 接通电源时持续播放航拍动态壁纸。
 - 使用电池时自动暂停，接回电源后继续播放。
 - 屏幕唤醒后自动恢复播放，一段视频结束后自动切换下一段航拍。
+- 支持随机播放、顺序播放和单段循环三种模式。
 - 读取 macOS 航拍清单，显示中文名称和英文名称，不再只显示 UUID。
 - 在下载管理器中预览航拍图片。
 - 支持下载单独一段航拍、当前分类或全部航拍视频。
@@ -27,7 +28,7 @@ AerialDesk 读取 Mac 上已有的 Apple 航拍清单和媒体文件。本仓库
 ## 构建和运行
 
 ```bash
-./build.sh
+zsh build.sh
 open build/AerialDesk.app
 ```
 
@@ -80,6 +81,7 @@ AerialDesk is a native macOS menu-bar app for playing aerial dynamic wallpapers 
 - Preview aerial images in the download manager.
 - Download one selected aerial, a category, or all available aerial videos.
 - Recognize Apple system videos and AerialDesk downloads without moving or deleting existing media.
+- Choose random playback, sequential playback, or single-video loop from the menu bar.
 - Toggle launch at login and reveal the app in `/Applications` from the menu bar.
 
 ### Requirements and build
@@ -89,9 +91,8 @@ AerialDesk is a native macOS menu-bar app for playing aerial dynamic wallpapers 
 - Swift toolchain from Xcode or the Command Line Tools
 
 ```bash
-./build.sh
+zsh build.sh
 open build/AerialDesk.app
 ```
 
 The repository intentionally excludes Apple aerial videos, thumbnails, caches, logs, and local runtime data. Source code is licensed under the MIT License.
-

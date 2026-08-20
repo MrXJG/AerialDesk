@@ -39,7 +39,22 @@ private struct PlaybackStatus: Codable {
     let loginItemStatus: String
     let applicationPath: String
     let applicationVersion: String
+    let playbackMode: String
     let updatedAt: String
+}
+
+private enum PlaybackMode: String, CaseIterable {
+    case random
+    case sequential
+    case single
+
+    var title: String {
+        switch self {
+        case .random: return "随机播放"
+        case .sequential: return "顺序播放"
+        case .single: return "单段循环"
+        }
+    }
 }
 
 @MainActor
@@ -54,10 +69,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     private var statusItem: NSStatusItem?
     private var statusMenuItem: NSMenuItem?
     private var loginItemMenuItem: NSMenuItem?
+    private var playbackModeMenuItems: [PlaybackMode: NSMenuItem] = [:]
+    private var playbackMode: PlaybackMode = .random
     private var videoCount = 0
     private var downloadManager: DownloadManagerWindowController?
     private let loginItemPreferenceKey = "LoginItemEnabledPreference"
     private let registeredLoginItemVersionKey = "RegisteredLoginItemVersion"
+    private let playbackModePreferenceKey = "PlaybackMode"
 
     private var statusDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -74,6 +92,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        let storedMode = UserDefaults.standard.string(forKey: playbackModePreferenceKey)
+        let forcedMode = ProcessInfo.processInfo.environment["AERIALDESK_PLAYBACK_MODE"]
+        playbackMode = PlaybackMode(rawValue: forcedMode ?? storedMode ?? "") ?? .random
         player.isMuted = true
         player.volume = 0
         player.actionAtItemEnd = .pause
@@ -126,6 +147,22 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         nextItem.target = self
         menu.addItem(nextItem)
 
+        menu.addItem(.separator())
+        let modeHeader = NSMenuItem(title: "播放模式", action: nil, keyEquivalent: "")
+        modeHeader.isEnabled = false
+        menu.addItem(modeHeader)
+        for mode in PlaybackMode.allCases {
+            let modeItem = NSMenuItem(
+                title: mode.title,
+                action: #selector(selectPlaybackMode),
+                keyEquivalent: ""
+            )
+            modeItem.target = self
+            modeItem.representedObject = mode.rawValue
+            playbackModeMenuItems[mode] = modeItem
+            menu.addItem(modeItem)
+        }
+
         let downloadItem = NSMenuItem(title: "下载航拍视频…", action: #selector(openDownloadManager), keyEquivalent: "d")
         downloadItem.target = self
         menu.addItem(downloadItem)
@@ -156,10 +193,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         quitItem.target = self
         menu.addItem(quitItem)
         statusItem?.menu = menu
+        refreshPlaybackModeMenu()
         refreshLoginItemMenu()
     }
 
     func menuWillOpen(_ menu: NSMenu) {
+        refreshPlaybackModeMenu()
         refreshLoginItemMenu()
     }
 
@@ -264,7 +303,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         AerialCatalog.shared.displayName(for: video)
     }
 
-    private func switchToNextVideo(reason: String) {
+    private func switchToNextVideo(reason: String, forceAdvance: Bool = false) {
         AerialCatalog.shared.reload()
         let videos = availableVideos()
         guard !videos.isEmpty else {
@@ -275,19 +314,56 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
             return
         }
 
-        let candidates: [URL]
-        if videos.count > 1, let currentVideo {
-            candidates = videos.filter { $0 != currentVideo }
-        } else {
-            candidates = videos
-        }
-
-        guard let selected = candidates.randomElement() else { return }
+        guard let selected = nextVideoURL(in: videos, forceAdvance: forceAdvance) else { return }
         currentVideo = selected
         let item = AVPlayerItem(url: selected)
         player.replaceCurrentItem(with: item)
         log("Selected \(displayName(for: selected)) [\(selected.lastPathComponent)], reason=\(reason)")
         applyPowerState(reason: reason)
+    }
+
+    private func nextVideoURL(in videos: [URL], forceAdvance: Bool = false) -> URL? {
+        guard let currentVideo else {
+            return videos.first
+        }
+
+        if playbackMode == .single, !forceAdvance {
+            return currentVideo
+        }
+
+        let mode = playbackMode == .single ? .sequential : playbackMode
+        switch mode {
+        case .single:
+            return currentVideo
+        case .sequential:
+            guard let currentIndex = videos.firstIndex(of: currentVideo) else {
+                return videos.first
+            }
+            return videos[(currentIndex + 1) % videos.count]
+        case .random:
+            let candidates = videos.count > 1 ? videos.filter { $0 != currentVideo } : videos
+            return candidates.randomElement()
+        }
+    }
+
+    private func refreshPlaybackModeMenu() {
+        for mode in PlaybackMode.allCases {
+            playbackModeMenuItems[mode]?.state = mode == playbackMode ? .on : .off
+        }
+    }
+
+    @objc private func selectPlaybackMode(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let selectedMode = PlaybackMode(rawValue: rawValue) else { return }
+        playbackMode = selectedMode
+        UserDefaults.standard.set(selectedMode.rawValue, forKey: playbackModePreferenceKey)
+        refreshPlaybackModeMenu()
+        log("Playback mode changed to \(selectedMode.rawValue)")
+        updateMenu(
+            state: player.rate > 0 ? "playing" : "paused",
+            source: lastPowerSource
+        )
+        writeStatus(playbackState: player.rate > 0 ? "playing" : "paused")
     }
 
     private func applyPowerState(reason: String) {
@@ -319,8 +395,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         default: displayState = state
         }
         let videoName = displayName(for: currentVideo)
-        statusMenuItem?.title = "\(displayState) · \(videoName) · 共 \(videoCount) 段"
+        statusMenuItem?.title = "\(displayState) · \(videoName) · \(playbackMode.title) · 共 \(videoCount) 段"
         statusItem?.button?.toolTip = "AerialDesk：\(displayState)"
+        refreshPlaybackModeMenu()
         refreshLoginItemMenu()
     }
 
@@ -344,6 +421,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
             applicationVersion: Bundle.main.object(
                 forInfoDictionaryKey: "CFBundleShortVersionString"
             ) as? String ?? "未知",
+            playbackMode: playbackMode.rawValue,
             updatedAt: formatter.string(from: Date())
         )
         guard let data = try? JSONEncoder().encode(status) else { return }
@@ -487,7 +565,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     }
 
     @objc private func nextVideo() {
-        switchToNextVideo(reason: "menu-next")
+        switchToNextVideo(reason: "menu-next", forceAdvance: true)
     }
 
     @objc private func openDownloadManager() {
