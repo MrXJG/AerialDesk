@@ -1,53 +1,97 @@
 # AerialDesk
 
-A native macOS menu-bar app that keeps aerial dynamic wallpapers playing on the desktop.
+原生 macOS 航拍动态壁纸播放器与下载管理器。
 
-## Features
+[English](#english)
 
-- Continue playing aerial videos while the Mac is on AC power.
-- Pause playback on battery power.
-- Resume after the screen wakes and automatically continue with the next video when one ends.
-- Read Apple aerial metadata and show Chinese/English names instead of UUIDs.
-- Preview an aerial image in the download manager.
-- Download one selected aerial, the current category, or all available aerial videos.
-- Recognize Apple system videos and user-managed videos without moving or deleting them.
-- Provide a menu-bar switch for “Launch at Login”.
-- Reveal the installed app in `/Applications` from the menu.
+## 功能
 
-## Requirements
+- 接通电源时持续播放航拍动态壁纸。
+- 使用电池时自动暂停，接回电源后继续播放。
+- 屏幕唤醒后自动恢复播放，一段视频结束后自动切换下一段航拍。
+- 读取 macOS 航拍清单，显示中文名称和英文名称，不再只显示 UUID。
+- 在下载管理器中预览航拍图片。
+- 支持下载单独一段航拍、当前分类或全部航拍视频。
+- 同时识别 Apple 系统航拍视频和 AerialDesk 下载的视频，不会自动移动或删除已有视频。
+- 菜单栏提供“登录时自动启动”开关。
+- 可以从菜单栏直接在“应用程序”中显示 AerialDesk。
 
-- macOS 14.0 or later
-- Apple Silicon Mac (the current build target is `arm64-apple-macos14.0`)
-- Swift toolchain provided by Xcode or the Command Line Tools
+## 系统要求
 
-The app reads the Apple aerial manifest and media already present on the Mac. It does not ship Apple aerial videos, system thumbnails, or cached media in this repository.
+- macOS 14.0 或更高版本
+- Apple Silicon Mac（当前构建目标为 `arm64-apple-macos14.0`）
+- Xcode 或 Command Line Tools 提供的 Swift 工具链
 
-## Build and run
+AerialDesk 读取 Mac 上已有的 Apple 航拍清单和媒体文件。本仓库不包含 Apple 航拍视频、系统缩略图或缓存媒体。
+
+## 构建和运行
 
 ```bash
 ./build.sh
 open build/AerialDesk.app
 ```
 
-The development build is ad-hoc signed. macOS may show the usual local-development security prompt. A distributable release should be signed and notarized with the developer’s own Apple Developer identity.
+开发构建使用 ad-hoc 签名，适合本机测试。正式分发时，应使用你自己的 Apple Developer 签名并完成公证。
 
-## Runtime data
+## 运行数据
 
-Runtime files are stored under:
+运行时数据默认保存在：
 
 ```text
 ~/Library/Application Support/AerialDesk/
 ```
 
-The app keeps downloaded videos in its own `Videos` directory and generated previews in `Thumbnails`. Existing Apple system aerial media remains in Apple’s own directories. The environment variables `AERIALDESK_VIDEO_DIR` and `AERIALDESK_THUMBNAIL_DIR` can be used for local testing.
+其中：
 
-## Important boundaries
+- `Videos/`：AerialDesk 下载的视频。
+- `Thumbnails/`：从 Apple 预览图或本地视频生成的缩略图。
+- `status.json`：当前播放、电源和登录项状态。
+- `AerialDesk.log`：运行日志。
 
-- Apple’s manifest format and system paths are private implementation details and may change between macOS releases.
-- Apple aerial videos and thumbnails are Apple-provided media; they are intentionally not included here.
-- The generated app icon is included as a project asset, but it does not contain Apple trademarks or Apple media.
+Apple 系统航拍媒体仍保留在 Apple 自己的系统目录中。为了方便本地测试，可以使用以下环境变量覆盖目录：
 
-## License
+```bash
+export AERIALDESK_VIDEO_DIR="$PWD/runtime/Videos"
+export AERIALDESK_THUMBNAIL_DIR="$PWD/runtime/Thumbnails"
+```
 
-The source code is released under the MIT License. See [LICENSE](LICENSE).
+## 注意事项
+
+- Apple 航拍清单格式和系统路径属于系统实现细节，可能随 macOS 版本变化。
+- Apple 航拍视频和缩略图属于 Apple 提供的媒体，本仓库不重新分发这些内容。
+- 应用图标是本项目资产，不包含 Apple 标志或 Apple 系统壁纸。
+- 当前版本主要针对 Apple Silicon；Intel 架构需要调整构建目标后再编译。
+
+## 许可证
+
+源代码使用 MIT License，详见 [LICENSE](LICENSE)。
+
+---
+
+## English
+
+AerialDesk is a native macOS menu-bar app for playing aerial dynamic wallpapers and managing aerial video downloads.
+
+### Features
+
+- Keep aerial videos playing on AC power and pause on battery.
+- Resume after screen wake and switch to the next video when playback ends.
+- Display localized Chinese and English aerial names instead of UUIDs.
+- Preview aerial images in the download manager.
+- Download one selected aerial, a category, or all available aerial videos.
+- Recognize Apple system videos and AerialDesk downloads without moving or deleting existing media.
+- Toggle launch at login and reveal the app in `/Applications` from the menu bar.
+
+### Requirements and build
+
+- macOS 14.0 or later
+- Apple Silicon Mac
+- Swift toolchain from Xcode or the Command Line Tools
+
+```bash
+./build.sh
+open build/AerialDesk.app
+```
+
+The repository intentionally excludes Apple aerial videos, thumbnails, caches, logs, and local runtime data. Source code is licensed under the MIT License.
 
