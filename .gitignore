@@ -1,0 +1,16 @@
+.DS_Store
+build/
+dist/
+*.app/
+*.dSYM/
+*.xcarchive/
+xcuserdata/
+DerivedData/
+
+# Local runtime data; never commit Apple media, thumbnails or logs.
+runtime/
+status.json
+*.log
+Videos/
+Thumbnails/
+
