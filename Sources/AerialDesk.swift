@@ -40,6 +40,7 @@ private struct PlaybackStatus: Codable {
     let applicationPath: String
     let applicationVersion: String
     let playbackMode: String
+    let playsOnBattery: Bool
     let updatedAt: String
 }
 
@@ -69,13 +70,16 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     private var statusItem: NSStatusItem?
     private var statusMenuItem: NSMenuItem?
     private var loginItemMenuItem: NSMenuItem?
+    private var batteryPlaybackMenuItem: NSMenuItem?
     private var playbackModeMenuItems: [PlaybackMode: NSMenuItem] = [:]
     private var playbackMode: PlaybackMode = .random
+    private var playsOnBattery = false
     private var videoCount = 0
     private var downloadManager: DownloadManagerWindowController?
     private let loginItemPreferenceKey = "LoginItemEnabledPreference"
     private let registeredLoginItemVersionKey = "RegisteredLoginItemVersion"
     private let playbackModePreferenceKey = "PlaybackMode"
+    private let batteryPlaybackPreferenceKey = "PlayOnBattery"
 
     private var statusDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -95,6 +99,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         let storedMode = UserDefaults.standard.string(forKey: playbackModePreferenceKey)
         let forcedMode = ProcessInfo.processInfo.environment["AERIALDESK_PLAYBACK_MODE"]
         playbackMode = PlaybackMode(rawValue: forcedMode ?? storedMode ?? "") ?? .random
+        playsOnBattery = UserDefaults.standard.bool(forKey: batteryPlaybackPreferenceKey)
         player.isMuted = true
         player.volume = 0
         player.actionAtItemEnd = .pause
@@ -163,6 +168,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
             menu.addItem(modeItem)
         }
 
+        batteryPlaybackMenuItem = NSMenuItem(
+            title: "使用电池时播放",
+            action: #selector(toggleBatteryPlayback),
+            keyEquivalent: ""
+        )
+        batteryPlaybackMenuItem?.target = self
+        menu.addItem(batteryPlaybackMenuItem!)
+
         let downloadItem = NSMenuItem(title: "下载航拍视频…", action: #selector(openDownloadManager), keyEquivalent: "d")
         downloadItem.target = self
         menu.addItem(downloadItem)
@@ -194,11 +207,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         menu.addItem(quitItem)
         statusItem?.menu = menu
         refreshPlaybackModeMenu()
+        refreshBatteryPlaybackMenu()
         refreshLoginItemMenu()
     }
 
     func menuWillOpen(_ menu: NSMenu) {
         refreshPlaybackModeMenu()
+        refreshBatteryPlaybackMenu()
         refreshLoginItemMenu()
     }
 
@@ -352,6 +367,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         }
     }
 
+    private func refreshBatteryPlaybackMenu() {
+        batteryPlaybackMenuItem?.state = playsOnBattery ? .on : .off
+        batteryPlaybackMenuItem?.title = "使用电池时播放"
+    }
+
     @objc private func selectPlaybackMode(_ sender: NSMenuItem) {
         guard let rawValue = sender.representedObject as? String,
               let selectedMode = PlaybackMode(rawValue: rawValue) else { return }
@@ -366,9 +386,18 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         writeStatus(playbackState: player.rate > 0 ? "playing" : "paused")
     }
 
+    @objc private func toggleBatteryPlayback() {
+        playsOnBattery.toggle()
+        UserDefaults.standard.set(playsOnBattery, forKey: batteryPlaybackPreferenceKey)
+        refreshBatteryPlaybackMenu()
+        log("Battery playback \(playsOnBattery ? "enabled" : "disabled")")
+        applyPowerState(reason: "battery-playback-setting")
+    }
+
     private func applyPowerState(reason: String) {
         let source = currentPowerSourceName()
-        let shouldPlay = isOnACPower() && !screenSleeping && currentVideo != nil
+        let powerAllowsPlayback = isOnACPower() || playsOnBattery
+        let shouldPlay = powerAllowsPlayback && !screenSleeping && currentVideo != nil
         let sourceChanged = source != lastPowerSource
         lastPowerSource = source
 
@@ -378,7 +407,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
             player.pause()
         }
 
-        let state = shouldPlay ? "playing" : (screenSleeping ? "paused-screen-sleep" : "paused-on-battery")
+        let state = shouldPlay
+            ? "playing"
+            : (screenSleeping ? "paused-screen-sleep" : "paused-on-battery")
         if sourceChanged || reason != "power-poll" {
             log("State \(state), source=\(source), rate=\(player.rate), reason=\(reason)")
         }
@@ -389,7 +420,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     private func updateMenu(state: String, source: String) {
         let displayState: String
         switch state {
-        case "playing": displayState = "播放中"
+        case "playing":
+            displayState = source == "Battery Power" ? "使用电池，播放中" : "播放中"
         case "paused-screen-sleep": displayState = "屏幕休眠，已暂停"
         case "paused-on-battery": displayState = "使用电池，已暂停"
         default: displayState = state
@@ -398,6 +430,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         statusMenuItem?.title = "\(displayState) · \(videoName) · \(playbackMode.title) · 共 \(videoCount) 段"
         statusItem?.button?.toolTip = "AerialDesk：\(displayState)"
         refreshPlaybackModeMenu()
+        refreshBatteryPlaybackMenu()
         refreshLoginItemMenu()
     }
 
@@ -422,6 +455,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
                 forInfoDictionaryKey: "CFBundleShortVersionString"
             ) as? String ?? "未知",
             playbackMode: playbackMode.rawValue,
+            playsOnBattery: playsOnBattery,
             updatedAt: formatter.string(from: Date())
         )
         guard let data = try? JSONEncoder().encode(status) else { return }

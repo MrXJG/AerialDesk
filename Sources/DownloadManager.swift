@@ -42,6 +42,123 @@ private final class AerialNameCellView: NSTableCellView {
     }
 }
 
+/// Uses the native Liquid Glass view on macOS 26 and falls back to the
+/// traditional visual-effect material on older supported macOS versions.
+private final class AerialGlassView: NSView {
+    enum Style {
+        case regular
+        case clear
+    }
+
+    let contentContainer = NSView()
+    private let effectView: NSView
+
+    init(
+        frame frameRect: NSRect = .zero,
+        style: Style = .regular,
+        cornerRadius: CGFloat = 14,
+        tintColor: NSColor? = nil,
+        fallbackMaterial: NSVisualEffectView.Material = .windowBackground,
+        fallbackBlendingMode: NSVisualEffectView.BlendingMode = .withinWindow
+    ) {
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView()
+            glass.style = style == .clear ? .clear : .regular
+            glass.cornerRadius = cornerRadius
+            glass.tintColor = tintColor
+            effectView = glass
+        } else {
+            let visualEffect = NSVisualEffectView()
+            visualEffect.material = fallbackMaterial
+            visualEffect.blendingMode = fallbackBlendingMode
+            visualEffect.state = .active
+            effectView = visualEffect
+        }
+
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = cornerRadius
+        layer?.masksToBounds = true
+
+        effectView.translatesAutoresizingMaskIntoConstraints = false
+        contentContainer.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(effectView)
+        NSLayoutConstraint.activate([
+            effectView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            effectView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            effectView.topAnchor.constraint(equalTo: topAnchor),
+            effectView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+
+        if #available(macOS 26.0, *), let glass = effectView as? NSGlassEffectView {
+            glass.contentView = contentContainer
+        } else {
+            effectView.addSubview(contentContainer)
+            NSLayoutConstraint.activate([
+                contentContainer.leadingAnchor.constraint(equalTo: effectView.leadingAnchor),
+                contentContainer.trailingAnchor.constraint(equalTo: effectView.trailingAnchor),
+                contentContainer.topAnchor.constraint(equalTo: effectView.topAnchor),
+                contentContainer.bottomAnchor.constraint(equalTo: effectView.bottomAnchor)
+            ])
+        }
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+
+/// Window-level glass background with a separate, unfiltered content layer.
+/// Keeping controls outside NSGlassEffectView.contentView prevents native glass
+/// from blurring or distorting the actual controls below the titlebar.
+private final class AerialWindowRootView: NSView {
+    let contentContainer = NSView()
+    private let effectView: NSView
+
+    override init(frame frameRect: NSRect) {
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView()
+            glass.style = .regular
+            glass.cornerRadius = 18
+            glass.tintColor = NSColor.controlAccentColor.withAlphaComponent(0.035)
+            effectView = glass
+        } else {
+            let visualEffect = NSVisualEffectView()
+            visualEffect.material = .underWindowBackground
+            visualEffect.blendingMode = .behindWindow
+            visualEffect.state = .active
+            effectView = visualEffect
+        }
+
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 18
+        layer?.masksToBounds = true
+
+        effectView.translatesAutoresizingMaskIntoConstraints = false
+        contentContainer.translatesAutoresizingMaskIntoConstraints = false
+        contentContainer.wantsLayer = true
+        contentContainer.layer?.backgroundColor = NSColor.clear.cgColor
+
+        addSubview(effectView)
+        addSubview(contentContainer)
+        NSLayoutConstraint.activate([
+            effectView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            effectView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            effectView.topAnchor.constraint(equalTo: topAnchor),
+            effectView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            contentContainer.leadingAnchor.constraint(equalTo: leadingAnchor),
+            contentContainer.trailingAnchor.constraint(equalTo: trailingAnchor),
+            contentContainer.topAnchor.constraint(equalTo: topAnchor),
+            contentContainer.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+
 @MainActor
 final class DownloadManagerWindowController: NSWindowController,
     NSTableViewDataSource,
@@ -81,9 +198,15 @@ final class DownloadManagerWindowController: NSWindowController,
     private let cancelButton = NSButton(title: "取消下载队列", target: nil, action: nil)
     private let openFolderButton = NSButton(title: "打开下载目录", target: nil, action: nil)
     private let requiresACCheckbox = NSButton(checkboxWithTitle: "仅接通电源时下载", target: nil, action: nil)
-    private let contentGlass = NSVisualEffectView()
-    private let listPanel = NSVisualEffectView()
-    private let previewPanel = NSVisualEffectView()
+    private let contentGlass = AerialWindowRootView()
+    private let listPanel = AerialGlassView(
+        tintColor: NSColor.controlAccentColor.withAlphaComponent(0.035),
+        fallbackMaterial: .sidebar
+    )
+    private let previewPanel = AerialGlassView(
+        tintColor: NSColor.controlAccentColor.withAlphaComponent(0.06),
+        fallbackMaterial: .hudWindow
+    )
     private let previewImageView = NSImageView()
     private let previewTitleLabel = NSTextField(labelWithString: "选择一个航拍查看预览")
     private let previewCategoryLabel = NSTextField(labelWithString: "")
@@ -113,7 +236,7 @@ final class DownloadManagerWindowController: NSWindowController,
     init() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1120, height: 760),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
@@ -124,7 +247,9 @@ final class DownloadManagerWindowController: NSWindowController,
         window.isOpaque = false
         window.backgroundColor = .clear
         window.titlebarAppearsTransparent = true
+        window.titlebarSeparatorStyle = .none
         window.titleVisibility = .hidden
+        window.isMovableByWindowBackground = true
         super.init(window: window)
 
         configureUI()
@@ -152,20 +277,12 @@ final class DownloadManagerWindowController: NSWindowController,
     }
 
     private func configureUI() {
-        guard let contentView = window?.contentView else { return }
+        guard let window else { return }
 
-        contentView.wantsLayer = true
-        contentView.layer?.backgroundColor = NSColor.clear.cgColor
-
-        configureGlass(contentGlass, material: .windowBackground)
-        contentGlass.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(contentGlass, positioned: .below, relativeTo: nil)
-        NSLayoutConstraint.activate([
-            contentGlass.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            contentGlass.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            contentGlass.topAnchor.constraint(equalTo: contentView.topAnchor),
-            contentGlass.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
-        ])
+        // Make the native glass view the actual window content so the material
+        // covers the complete frame, including the area behind the titlebar.
+        window.contentView = contentGlass
+        let contentView = contentGlass.contentContainer
 
         searchField.placeholderString = "搜索中文或英文名称"
         searchField.delegate = self
@@ -174,9 +291,11 @@ final class DownloadManagerWindowController: NSWindowController,
         categoryPopup.target = self
         categoryPopup.action = #selector(filterChanged)
         categoryPopup.translatesAutoresizingMaskIntoConstraints = false
+        applyLiquidGlass(to: categoryPopup)
 
         let refreshButton = NSButton(title: "刷新清单", target: self, action: #selector(refreshCatalog))
         refreshButton.translatesAutoresizingMaskIntoConstraints = false
+        applyLiquidGlass(to: refreshButton)
 
         let topStack = NSStackView(views: [searchField, categoryPopup, refreshButton])
         topStack.orientation = .horizontal
@@ -230,13 +349,11 @@ final class DownloadManagerWindowController: NSWindowController,
         scrollView.borderType = .noBorder
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
-        configureGlass(listPanel, material: .sidebar)
         listPanel.translatesAutoresizingMaskIntoConstraints = false
+        listPanel.contentContainer.addSubview(scrollView)
 
-        configureGlass(previewPanel, material: .hudWindow)
-        previewPanel.layer?.cornerRadius = 10
-        previewPanel.layer?.borderWidth = 1
-        previewPanel.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.55).cgColor
+        previewPanel.layer?.borderWidth = 0.5
+        previewPanel.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.35).cgColor
         previewPanel.translatesAutoresizingMaskIntoConstraints = false
 
         previewImageView.imageScaling = .scaleProportionallyUpOrDown
@@ -266,13 +383,14 @@ final class DownloadManagerWindowController: NSWindowController,
         previewDownloadButton.action = #selector(downloadPreviewedItem)
         previewDownloadButton.isEnabled = false
         previewDownloadButton.translatesAutoresizingMaskIntoConstraints = false
+        applyLiquidGlass(to: previewDownloadButton)
 
-        previewPanel.addSubview(previewImageView)
-        previewPanel.addSubview(previewTitleLabel)
-        previewPanel.addSubview(previewCategoryLabel)
-        previewPanel.addSubview(previewStatusLabel)
-        previewPanel.addSubview(previewSourceLabel)
-        previewPanel.addSubview(previewDownloadButton)
+        previewPanel.contentContainer.addSubview(previewImageView)
+        previewPanel.contentContainer.addSubview(previewTitleLabel)
+        previewPanel.contentContainer.addSubview(previewCategoryLabel)
+        previewPanel.contentContainer.addSubview(previewStatusLabel)
+        previewPanel.contentContainer.addSubview(previewSourceLabel)
+        previewPanel.contentContainer.addSubview(previewDownloadButton)
 
         progressIndicator.isIndeterminate = false
         progressIndicator.minValue = 0
@@ -301,6 +419,10 @@ final class DownloadManagerWindowController: NSWindowController,
         openFolderButton.target = self
         openFolderButton.action = #selector(openDownloadFolder)
 
+        for button in [selectedButton, categoryButton, allButton, cancelButton, openFolderButton] {
+            applyLiquidGlass(to: button)
+        }
+
         let buttonStack = NSStackView(views: [
             selectedButton,
             categoryButton,
@@ -317,7 +439,6 @@ final class DownloadManagerWindowController: NSWindowController,
         contentView.addSubview(topStack)
         contentView.addSubview(summaryStack)
         contentView.addSubview(listPanel)
-        contentView.addSubview(scrollView)
         contentView.addSubview(previewPanel)
         contentView.addSubview(progressLabel)
         contentView.addSubview(progressIndicator)
@@ -325,25 +446,27 @@ final class DownloadManagerWindowController: NSWindowController,
         contentView.addSubview(buttonStack)
 
         NSLayoutConstraint.activate([
-            topStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
+            topStack.topAnchor.constraint(equalTo: contentView.safeAreaLayoutGuide.topAnchor, constant: 12),
             topStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             topStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            topStack.heightAnchor.constraint(equalToConstant: 32),
             searchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 260),
             categoryPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 220),
 
             summaryStack.topAnchor.constraint(equalTo: topStack.bottomAnchor, constant: 10),
             summaryStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             summaryStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            summaryStack.heightAnchor.constraint(equalToConstant: 20),
 
-            scrollView.topAnchor.constraint(equalTo: summaryStack.bottomAnchor, constant: 8),
-            scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            scrollView.trailingAnchor.constraint(equalTo: previewPanel.leadingAnchor, constant: -12),
-            scrollView.bottomAnchor.constraint(equalTo: progressLabel.topAnchor, constant: -12),
+            listPanel.topAnchor.constraint(equalTo: summaryStack.bottomAnchor, constant: 8),
+            listPanel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            listPanel.trailingAnchor.constraint(equalTo: previewPanel.leadingAnchor, constant: -12),
+            listPanel.bottomAnchor.constraint(equalTo: progressLabel.topAnchor, constant: -12),
 
-            listPanel.topAnchor.constraint(equalTo: scrollView.topAnchor),
-            listPanel.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
-            listPanel.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
-            listPanel.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
+            scrollView.topAnchor.constraint(equalTo: listPanel.contentContainer.topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: listPanel.contentContainer.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: listPanel.contentContainer.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: listPanel.contentContainer.bottomAnchor),
 
             previewPanel.topAnchor.constraint(equalTo: scrollView.topAnchor),
             previewPanel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
@@ -382,9 +505,11 @@ final class DownloadManagerWindowController: NSWindowController,
 
             progressIndicator.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             progressIndicator.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            progressIndicator.heightAnchor.constraint(equalToConstant: 8),
             progressIndicator.bottomAnchor.constraint(equalTo: requiresACCheckbox.topAnchor, constant: -10),
 
             requiresACCheckbox.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            requiresACCheckbox.heightAnchor.constraint(equalToConstant: 22),
             requiresACCheckbox.bottomAnchor.constraint(equalTo: buttonStack.topAnchor, constant: -10),
 
             buttonStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
@@ -397,16 +522,10 @@ final class DownloadManagerWindowController: NSWindowController,
         updateButtons()
     }
 
-    private func configureGlass(
-        _ view: NSVisualEffectView,
-        material: NSVisualEffectView.Material
-    ) {
-        view.material = material
-        view.blendingMode = .withinWindow
-        view.state = .active
-        view.wantsLayer = true
-        view.layer?.cornerRadius = 14
-        view.layer?.masksToBounds = true
+    private func applyLiquidGlass(to button: NSButton) {
+        if #available(macOS 26.0, *) {
+            button.bezelStyle = .glass
+        }
     }
 
     private func reloadCatalog() {
