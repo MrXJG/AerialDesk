@@ -81,7 +81,9 @@ final class DownloadManagerWindowController: NSWindowController,
     private let cancelButton = NSButton(title: "取消下载队列", target: nil, action: nil)
     private let openFolderButton = NSButton(title: "打开下载目录", target: nil, action: nil)
     private let requiresACCheckbox = NSButton(checkboxWithTitle: "仅接通电源时下载", target: nil, action: nil)
-    private let previewPanel = NSView()
+    private let contentGlass = NSVisualEffectView()
+    private let listPanel = NSVisualEffectView()
+    private let previewPanel = NSVisualEffectView()
     private let previewImageView = NSImageView()
     private let previewTitleLabel = NSTextField(labelWithString: "选择一个航拍查看预览")
     private let previewCategoryLabel = NSTextField(labelWithString: "")
@@ -119,6 +121,10 @@ final class DownloadManagerWindowController: NSWindowController,
         window.minSize = NSSize(width: 980, height: 640)
         window.center()
         window.isReleasedWhenClosed = false
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
         super.init(window: window)
 
         configureUI()
@@ -147,6 +153,19 @@ final class DownloadManagerWindowController: NSWindowController,
 
     private func configureUI() {
         guard let contentView = window?.contentView else { return }
+
+        contentView.wantsLayer = true
+        contentView.layer?.backgroundColor = NSColor.clear.cgColor
+
+        configureGlass(contentGlass, material: .windowBackground)
+        contentGlass.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(contentGlass, positioned: .below, relativeTo: nil)
+        NSLayoutConstraint.activate([
+            contentGlass.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            contentGlass.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            contentGlass.topAnchor.constraint(equalTo: contentView.topAnchor),
+            contentGlass.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
+        ])
 
         searchField.placeholderString = "搜索中文或英文名称"
         searchField.delegate = self
@@ -198,21 +217,26 @@ final class DownloadManagerWindowController: NSWindowController,
         tableView.delegate = self
         tableView.dataSource = self
         tableView.allowsMultipleSelection = true
-        tableView.usesAlternatingRowBackgroundColors = true
+        tableView.usesAlternatingRowBackgroundColors = false
+        tableView.backgroundColor = .clear
+        tableView.selectionHighlightStyle = .regular
         tableView.rowHeight = 60
 
         let scrollView = NSScrollView()
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
-        scrollView.borderType = .bezelBorder
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
-        previewPanel.wantsLayer = true
+        configureGlass(listPanel, material: .sidebar)
+        listPanel.translatesAutoresizingMaskIntoConstraints = false
+
+        configureGlass(previewPanel, material: .hudWindow)
         previewPanel.layer?.cornerRadius = 10
         previewPanel.layer?.borderWidth = 1
-        previewPanel.layer?.borderColor = NSColor.separatorColor.cgColor
-        previewPanel.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        previewPanel.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.55).cgColor
         previewPanel.translatesAutoresizingMaskIntoConstraints = false
 
         previewImageView.imageScaling = .scaleProportionallyUpOrDown
@@ -222,7 +246,7 @@ final class DownloadManagerWindowController: NSWindowController,
         previewImageView.wantsLayer = true
         previewImageView.layer?.cornerRadius = 8
         previewImageView.layer?.masksToBounds = true
-        previewImageView.layer?.backgroundColor = NSColor.quaternaryLabelColor.cgColor
+        previewImageView.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.14).cgColor
         previewImageView.translatesAutoresizingMaskIntoConstraints = false
 
         previewTitleLabel.font = .boldSystemFont(ofSize: 15)
@@ -292,6 +316,7 @@ final class DownloadManagerWindowController: NSWindowController,
 
         contentView.addSubview(topStack)
         contentView.addSubview(summaryStack)
+        contentView.addSubview(listPanel)
         contentView.addSubview(scrollView)
         contentView.addSubview(previewPanel)
         contentView.addSubview(progressLabel)
@@ -314,6 +339,11 @@ final class DownloadManagerWindowController: NSWindowController,
             scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             scrollView.trailingAnchor.constraint(equalTo: previewPanel.leadingAnchor, constant: -12),
             scrollView.bottomAnchor.constraint(equalTo: progressLabel.topAnchor, constant: -12),
+
+            listPanel.topAnchor.constraint(equalTo: scrollView.topAnchor),
+            listPanel.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
+            listPanel.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+            listPanel.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
 
             previewPanel.topAnchor.constraint(equalTo: scrollView.topAnchor),
             previewPanel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
@@ -365,6 +395,18 @@ final class DownloadManagerWindowController: NSWindowController,
 
 
         updateButtons()
+    }
+
+    private func configureGlass(
+        _ view: NSVisualEffectView,
+        material: NSVisualEffectView.Material
+    ) {
+        view.material = material
+        view.blendingMode = .withinWindow
+        view.state = .active
+        view.wantsLayer = true
+        view.layer?.cornerRadius = 14
+        view.layer?.masksToBounds = true
     }
 
     private func reloadCatalog() {

@@ -10,6 +10,7 @@
 - 使用电池时自动暂停，接回电源后继续播放。
 - 屏幕唤醒后自动恢复播放，一段视频结束后自动切换下一段航拍。
 - 支持随机播放、顺序播放和单段循环三种模式。
+- 下载管理器使用 macOS 原生玻璃材质，预览面板和列表保持清晰的层次感。
 - 读取 macOS 航拍清单，显示中文名称和英文名称，不再只显示 UUID。
 - 在下载管理器中预览航拍图片。
 - 支持下载单独一段航拍、当前分类或全部航拍视频。
@@ -82,6 +83,7 @@ AerialDesk is a native macOS menu-bar app for playing aerial dynamic wallpapers 
 - Download one selected aerial, a category, or all available aerial videos.
 - Recognize Apple system videos and AerialDesk downloads without moving or deleting existing media.
 - Choose random playback, sequential playback, or single-video loop from the menu bar.
+- Use native macOS glass materials in the download manager and preview panel.
 - Toggle launch at login and reveal the app in `/Applications` from the menu bar.
 
 ### Requirements and build
