@@ -58,6 +58,22 @@ private enum PlaybackMode: String, CaseIterable {
     }
 }
 
+private struct GitHubRelease: Decodable, Sendable {
+    let tagName: String
+    let name: String
+    let htmlURL: URL
+
+    enum CodingKeys: String, CodingKey {
+        case tagName = "tag_name"
+        case name
+        case htmlURL = "html_url"
+    }
+
+    var version: String {
+        tagName.trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
+    }
+}
+
 @MainActor
 private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var windows: [NSWindow] = []
@@ -71,15 +87,20 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     private var statusMenuItem: NSMenuItem?
     private var loginItemMenuItem: NSMenuItem?
     private var batteryPlaybackMenuItem: NSMenuItem?
+    private var updateMenuItem: NSMenuItem?
     private var playbackModeMenuItems: [PlaybackMode: NSMenuItem] = [:]
     private var playbackMode: PlaybackMode = .random
     private var playsOnBattery = false
+    private var updateCheckTimer: Timer?
+    private var isCheckingForUpdates = false
+    private var availableRelease: GitHubRelease?
     private var videoCount = 0
     private var downloadManager: DownloadManagerWindowController?
     private let loginItemPreferenceKey = "LoginItemEnabledPreference"
     private let registeredLoginItemVersionKey = "RegisteredLoginItemVersion"
     private let playbackModePreferenceKey = "PlaybackMode"
     private let batteryPlaybackPreferenceKey = "PlayOnBattery"
+    private let latestReleaseURL = URL(string: "https://api.github.com/repos/MrXJG/AerialDesk/releases/latest")!
 
     private var statusDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -115,6 +136,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
             Task { @MainActor in self?.applyPowerState(reason: "power-poll") }
         }
 
+        scheduleUpdateChecks()
+
         if let secondsString = ProcessInfo.processInfo.environment["AERIALDESK_SWITCH_INTERVAL"],
            let seconds = Double(secondsString), seconds > 0 {
             testSwitchTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: true) { [weak self] _ in
@@ -132,6 +155,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     func applicationWillTerminate(_ notification: Notification) {
         powerTimer?.invalidate()
         testSwitchTimer?.invalidate()
+        updateCheckTimer?.invalidate()
         player.pause()
         writeStatus(playbackState: "stopped")
     }
@@ -185,6 +209,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         menu.addItem(folderItem)
 
         menu.addItem(.separator())
+        updateMenuItem = NSMenuItem(
+            title: "检查更新…",
+            action: #selector(updateMenuAction),
+            keyEquivalent: ""
+        )
+        updateMenuItem?.target = self
+        menu.addItem(updateMenuItem!)
+
         loginItemMenuItem = NSMenuItem(
             title: "登录时自动启动",
             action: #selector(toggleLoginItem),
@@ -208,12 +240,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         statusItem?.menu = menu
         refreshPlaybackModeMenu()
         refreshBatteryPlaybackMenu()
+        refreshUpdateMenu()
         refreshLoginItemMenu()
     }
 
     func menuWillOpen(_ menu: NSMenu) {
         refreshPlaybackModeMenu()
         refreshBatteryPlaybackMenu()
+        refreshUpdateMenu()
         refreshLoginItemMenu()
     }
 
@@ -370,6 +404,137 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     private func refreshBatteryPlaybackMenu() {
         batteryPlaybackMenuItem?.state = playsOnBattery ? .on : .off
         batteryPlaybackMenuItem?.title = "使用电池时播放"
+    }
+
+    private func scheduleUpdateChecks() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            Task { @MainActor in
+                self?.checkForUpdates(silently: true)
+            }
+        }
+        updateCheckTimer = Timer.scheduledTimer(withTimeInterval: 6 * 60 * 60, repeats: true) {
+            [weak self] _ in
+            Task { @MainActor in
+                self?.checkForUpdates(silently: true)
+            }
+        }
+    }
+
+    private func refreshUpdateMenu() {
+        guard let updateMenuItem else { return }
+        if isCheckingForUpdates {
+            updateMenuItem.title = "正在检查更新…"
+            updateMenuItem.isEnabled = false
+        } else if let availableRelease {
+            updateMenuItem.title = "有新版本：\(availableRelease.version)"
+            updateMenuItem.isEnabled = true
+            updateMenuItem.state = .on
+        } else {
+            updateMenuItem.title = "检查更新…"
+            updateMenuItem.isEnabled = true
+            updateMenuItem.state = .off
+        }
+    }
+
+    @objc private func updateMenuAction() {
+        if let availableRelease {
+            NSWorkspace.shared.open(availableRelease.htmlURL)
+        } else {
+            checkForUpdates(silently: false)
+        }
+    }
+
+    private func checkForUpdates(silently: Bool) {
+        guard !isCheckingForUpdates else { return }
+        isCheckingForUpdates = true
+        refreshUpdateMenu()
+
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let release = try await fetchLatestRelease()
+                isCheckingForUpdates = false
+                availableRelease = isNewerVersion(release.version) ? release : nil
+                refreshUpdateMenu()
+
+                if !silently {
+                    showUpdateResult(release)
+                }
+                log("Update check succeeded: latest=\(release.version), available=\(availableRelease != nil)")
+            } catch {
+                isCheckingForUpdates = false
+                refreshUpdateMenu()
+                log("Update check failed: \(error.localizedDescription)")
+                if !silently {
+                    let alert = NSAlert()
+                    alert.alertStyle = .warning
+                    alert.messageText = "检查更新失败"
+                    alert.informativeText = error.localizedDescription
+                    alert.addButton(withTitle: "好")
+                    alert.runModal()
+                }
+            }
+        }
+    }
+
+    private func fetchLatestRelease() async throws -> GitHubRelease {
+        var request = URLRequest(url: latestReleaseURL)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 15
+        request.setValue("AerialDesk/\(applicationBuildIdentity)", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            throw NSError(
+                domain: "AerialDeskUpdateCheck",
+                code: status,
+                userInfo: [NSLocalizedDescriptionKey: "更新服务器返回 HTTP \(status)"]
+            )
+        }
+        return try JSONDecoder().decode(GitHubRelease.self, from: data)
+    }
+
+    private func isNewerVersion(_ remoteVersion: String) -> Bool {
+        let local = versionComponents(
+            Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+        )
+        let remote = versionComponents(remoteVersion)
+        let count = max(local.count, remote.count)
+        for index in 0..<count {
+            let localPart = index < local.count ? local[index] : 0
+            let remotePart = index < remote.count ? remote[index] : 0
+            if remotePart != localPart { return remotePart > localPart }
+        }
+        return false
+    }
+
+    private func versionComponents(_ version: String) -> [Int] {
+        version
+            .split(separator: ".")
+            .map { component in
+                Int(component.prefix { $0.isNumber }) ?? 0
+            }
+    }
+
+    private func showUpdateResult(_ release: GitHubRelease) {
+        let alert = NSAlert()
+        if isNewerVersion(release.version) {
+            alert.messageText = "发现 AerialDesk 新版本 \(release.version)"
+            alert.informativeText = "当前版本：\(applicationBuildIdentity)\n最新版本：\(release.name)"
+            alert.addButton(withTitle: "打开发布页")
+            alert.addButton(withTitle: "稍后")
+            if alert.runModal() == .alertFirstButtonReturn {
+                NSWorkspace.shared.open(release.htmlURL)
+            }
+        } else {
+            alert.messageText = "已经是最新版本"
+            alert.informativeText = "当前版本：\(applicationBuildIdentity)"
+            alert.addButton(withTitle: "好")
+            alert.runModal()
+        }
     }
 
     @objc private func selectPlaybackMode(_ sender: NSMenuItem) {

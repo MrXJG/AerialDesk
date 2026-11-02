@@ -15,6 +15,8 @@ swiftc -target arm64-apple-macos14.0 \
   "$ROOT"/Sources/*.swift \
   -o "$APP/Contents/MacOS/AerialDesk"
 
+chmod 0755 "$APP/Contents/MacOS/AerialDesk"
+
 cp "$ROOT/Info.plist" "$APP/Contents/Info.plist"
 cp "$ROOT/assets/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
@@ -24,4 +26,3 @@ codesign --force --deep --sign - "$APP"
 
 echo "Built: $APP"
 echo "Run:   open '$APP'"
-
